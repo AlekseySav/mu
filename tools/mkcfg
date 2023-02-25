@@ -1,0 +1,28 @@
+#!/bin/python3
+
+import sys
+
+def say(type, name):
+    name = name.replace(";", "")
+    val = ''
+    if '[' in name:
+        name, val = name.split('[')
+        val = '*[' + val
+    tab = '\t'
+    print(f'{struct[0]}.{name}:\t{tab if len(name) < 5 else ""}.=.+[{type}{val}]')
+
+for line in sys.stdin:
+    match line.split():
+        case ['#define', name, value]:
+            print(f'{name}={value}')
+        case ['struct', name]:
+            print('\n\t.struct')
+            struct = name
+        case ['};']:
+            print(f'{struct}_size:')
+        case [type, name]:
+            if '#' in type:
+                continue
+            say(type[1], name)
+        case ['struct', type, name]:
+            say(type + '_size', name)
