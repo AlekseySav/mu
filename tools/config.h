@@ -61,8 +61,8 @@ struct fp
     u2 inode;
     u2 pos;
     u2 buf;
+    u2 xzones;
 };
-#define fp_log 3
 
 struct proc
 {
