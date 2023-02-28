@@ -281,7 +281,7 @@ keyboard_interrupt:
 kb.actions:
 1:	test	dl, dl				/* put char */
 	js	0f
-	mov	si, (kb.tail)
+6:	mov	si, (kb.tail)
 	inc	(kb.tail)
 4:	and	(kb.tail), TTY_SIZE-1
 	add	si, kb.queue
@@ -295,7 +295,13 @@ kb.actions:
 	je	0f
 	add	(kb.tail), TTY_SIZE-1
 	j	4b
-2:	mov	cl, al				/* shift */
+5:	test	dl, dl				/* new line */
+	js	0f
+	call	6b
+	push	(kb.tail)
+	pop	(kb.cooked)
+	ret
+2:	mov	cl, al				/* ctrl, shift */
 	and	cl, 0x7f
 	mov	al, 1
 	shl	al, cl
@@ -309,18 +315,24 @@ kb.no = 0b-kb.actions
 kb.ch = 1b-kb.actions
 kb.md = 2b-kb.actions
 kb.bs = 3b-kb.actions
+kb.lf = 5b-kb.actions
 	.data
-kb.table: 1f; 2f
-1:	<\0\e1234567890-=\b\t>
-	<qwertyuiop[]\n\0>			/* ctrl unused */
+kb.table: 1f; 2f; 3f; 1f
+1:	<\0\e1234567890-=\b\t>			/* default */
+	<qwertyuiop[]\n>; .byte 0x82
 	<asdfghjkl;'`>; .byte 0x81
 	<\\zxcvbnm,./>; .byte 0x81
 	<*\0 \0>				/* alt capslock unused */
 kb.count = .-1b
-2:	<\0\e!@#$%^&*()_+\b\t>
-	<QWERTYUIOP[]\n\0>
+2:	<\0\e!@#$%^&*()_+\b\t>			/* shift */
+	<QWERTYUIOP[]\n>; .byte 0x82
 	<ASDFGHJKL:"~>; .byte 0x81
 	<\\ZXCVBNM<\>?>; .byte 0x81
+	<*\0 \0>
+3:	<\0\e1234567890-=\b\t>			/* ctrl */
+	<\^Q\^W\^E\^R\^T\^Y\^U\^I\^O\^P\^[\^]\n>; .byte 0x82
+	<\^A\^S\^D\^F\^G\^H\^J\^K\^L;'`>; .byte 0x81
+	<\^\\^Z\^X\^C\^V\^B\^N\^M,./>; .byte 0x81
 	<*\0 \0>
 kb.action:
 	.byte kb.no, kb.ch			/* line 1 */
@@ -329,7 +341,7 @@ kb.action:
 	.byte kb.ch, kb.ch, kb.bs, kb.ch
 	.byte kb.ch, kb.ch, kb.ch, kb.ch, kb.ch	/* line 2 */
 	.byte kb.ch, kb.ch, kb.ch, kb.ch, kb.ch
-	.byte kb.ch, kb.ch, kb.ch, kb.no
+	.byte kb.ch, kb.ch, kb.lf, kb.md
 	.byte kb.ch, kb.ch, kb.ch, kb.ch, kb.ch	/* line 3 */
 	.byte kb.ch, kb.ch, kb.ch, kb.ch, kb.ch
 	.byte kb.ch, kb.ch, kb.md
@@ -342,7 +354,7 @@ kb.state: .=.+2					/* 1=shift, 2=ctrl */
 kb.queue: .=.+TTY_SIZE
 kb.head: .=.+2
 kb.tail: .=.+2
-
+kb.cooked: .=.+2
 
 /*
  * tty driver
@@ -373,27 +385,47 @@ out_w:	push	ax
 	ret
 
 
+/* - update_cursor(cursor: ax) 			{ ax, bx, cx, dx } */
+update_cursor:
+	shr	ax, 1
+	mov	cx, 0x0e0f			/* update cursor */
+	mov	bx, 0x3d4
+	mov	dx, 0x3d5
+	jmp	out_w
+
 /* - tty.read(buf: fs:si, cx: n) -> n: p.ax */
 	.text
 tty.read:
-	mov	p.ax(bp), cx
-	push	fs
-	pop	es
 	mov	di, si
-1:	nop
 	mov	si, (kb.head)
+	pushf
+1:	sti
 	cmp	si, (kb.tail)
 	je	1b
+	popf
+	cmpb	kb.queue(si), '\^D
+	jne	1f
+	mov	p.ax(bp), 0
 	inc	(kb.head)
 	and	(kb.head), TTY_SIZE-1
-	add	si, kb.queue
-	lodsb
+	push	(kb.head)
+	pop	(kb.cooked)
+	ret
+1:	mov	p.ax(bp), cx
+	push	fs
+	pop	es
+	pushf
+1:	sti
+	cmp	si, (kb.cooked)
+	je	1b
+	popf
+2:	mov	al, kb.queue(si)
+	inc	si
+	and	si, TTY_SIZE-1
 	stosb
-	cmp	al, '\n
-	je	2f
-	loop	1b
-	inc	cx
-2:	dec	cx
+	cmp	si, (kb.cooked)
+	loopne	2b
+	mov	(kb.head), si
 	sub	p.ax(bp), cx
 	ret
 
@@ -410,17 +442,13 @@ tty._write:
 	lodsb
 	cmp	al, '\s
 	jb	2f
-	mov	ah, 7
+	mov	ah, (attr)
 	stosw
 3:	loop	1b
 	mov	ax, di
-	mov	(cursor), ax
-	shr	ax, 1
 	pop	es
-	mov	cx, 0x0e0f			/* update cursor */
-	mov	bx, 0x3d4
-	mov	dx, 0x3d5
-	jmp	out_w
+	mov	(cursor), ax
+	jmp	update_cursor
 2:	mov	bx, con.table
 	xlat
 	cbw
@@ -451,7 +479,30 @@ con.table:
 	.byte	c.no-c, c.no-c, c.no-c, c.no-c, c.no-c, c.no-c, c.no-c, c.no-c
 	.byte	c.no-c, c.no-c, c.no-c, c.es-c, c.no-c, c.no-c, c.no-c, c.no-c
 columns: 160
+tty:
 cursor:	0; 0xb800
+attr: 0x07
+
+
+/* - sys.gtty */
+	.text
+sys.gtty:
+	mov	di, si
+	mov	si, tty
+	mov	cx, tty_size/2
+	push	es
+	push	fs
+	pop	es
+	rep movsw
+	pop	es
+	ret
+
+/* - sys.stty */
+sys.stty:
+	mov	di, tty
+	mov	cx, tty_size/2
+	rep seg fs movsw
+	jmp	update_cursor
 
 
 /*
@@ -473,6 +524,7 @@ sys.getppid:
 
 /* - sys.brk */
 sys.brk:
+	mov	ax, si
 	sub	ax, p.brk(bp)
 	jbe	1f
 	call	adjust_break
@@ -534,6 +586,9 @@ sys.fork:
 	xor	di, di
 	mov	cx, p.brk(bp)			/* no need for cs:bp :) */
 	rep movsb
+			//mov ax, p.sp(bp); call t_printn
+			//mov bx, p.sp(bp)
+			//mov ax, 18(es:bx); call t_printn
 	pop	es
 	pop	ds
 	jmp	reset_segments
@@ -828,6 +883,19 @@ seek_table: 0f; 1f; 2f
 	mov	dx, cx
 	ret
 
+/* - sys.stat */
+sys.stat:
+	call	get_fp
+	beq	error
+	xchg	si, di
+	mov	cx, [inode_size-[10*2]]/2
+	push	es
+	push	fs
+	pop	es
+	rep movsw
+	pop	es
+	ret
+
 
 /* - sys.read */
 sys.read:
@@ -944,6 +1012,9 @@ dir_entry:
 	test	p.ax(bp), -1
 	jne	9f
 	xor	di, di				/* not found */
+	pop	fs
+	pop	si
+	pop	cx
 	ret
 9:	pop	fs
 	pop	si
@@ -1010,6 +1081,53 @@ namei:	push	cx
 	ret
 
 
+/* - copy_arg(source: fs:ax, dest: es:di) -> dest adjusted { ax } */
+copy_arg:
+	push	si
+	mov	si, ax
+1:	seg	fs
+	lodsb
+	stosb
+	test	al, al
+	jne	1b
+	pop	si
+	ret
+
+/* - copy_args(args: fs:cx) -> p.sp */
+copy_args:
+ 	push	es
+ 	push	fs
+ 	pop	es
+ 	push	bx				/* *argv, argc */
+ 	push	di				/* **argv */
+	mov	bx, 2
+	xor	di, di
+1:	seg	fs
+ 	lodsw
+ 	test	ax, ax
+ 	je	0f
+	inc	di
+	j	1b
+0:	mov	(es:STACK_SIZE-4), di		/* save argc */
+	mov	(es:STACK_SIZE-2), 2		/* save argv */
+	inc	di
+	shl	di, 1				/* di=first free chunk */
+	sub	si, di
+2:	seg	fs
+	lodsw
+	test	ax, ax
+	je	0f
+	mov	(es:bx), di			/* save argv[i] */
+	add	bx, 2
+	call	copy_arg
+	j	2b
+0:	pop	di
+ 	pop	bx
+ 	pop	es
+ 	mov	p.sp(bp), STACK_SIZE-4
+ 	ret
+
+
 /* - sys.open */
 _open:
 	call	create_fp
@@ -1047,38 +1165,49 @@ sys.create:
 	ret
 
 /* - sys.exec */
-	.data
-exec_pos: STACK_SIZE; 0
 	.text
 sys.exec:
 	call	_open
+	testb	i.flags(di), I_X
+	beq	error
 	movb	f.mode(bx), 0
+	mov	(break_end), fs
 	mov	ax, i.size(di)
-	add	ax, 15
-	shl	ax, 4
-	add	ax, p.seg(bp)
-	cmp	ax, END_BREAK
-	bhis	error
-	mov	(break_end), ax			/* new break */
-	mov	p.brk(bp), cx
-	mov	p.sp(bp), STACK_SIZE
+	add	ax, STACK_SIZE
+	push	ax
+	call	adjust_break
+	pop	p.brk(bp)
+	mov	si, cx
+	call	copy_args
 	mov	si, STACK_SIZE
 1:	mov	cx, 512
 	call	read_fp
 	mov	ax, p.ax(bp)
-	test	ax, ax
-	jns	2f
-	jmp	error
+	// test	ax, ax
+	// jns	2f
+	// jmp	error		/* won't work ... */
 2:	add	si, ax
 	test	ax, ax
 	jne	1b
-	mov	(exec_pos+2), fs
+	mov	sp, p.sp(bp)
 	mov	ax, fs
 	mov	ds, ax
 	mov	es, ax
 	mov	ss, ax
-	// mov	ax, fs; call t_printn
-	ljmp	(cs:exec_pos)
+	pop	cx		/* argc */
+	pop	si		/* argv */
+	push	0x0200
+	push	ax
+	push	STACK_SIZE
+	iret
+
+/* - sys.chdir */
+sys.chdir:
+	call	_open
+	testb	i.flags(di), I_D
+	beq	error
+	mov	p.pwd(bp), di
+	ret
 
 
 /*
@@ -1103,8 +1232,12 @@ sys_table:
 	0; sys.getppid
 	0; sys.alloc
 	0; sys.free
-	2; sys.exec
+	4; sys.exec
 	0; sys.sync
+	2; sys.gtty
+	2; sys.stty
+	2; sys.chdir
+	2; sys.stat
 
 /* - system_call */
 system_call:
@@ -1154,6 +1287,8 @@ sys_return:
 	pop	bx
 	pop	cx
 	iret
+
+/* - error */
 error:
 	mov	p.ax(bp), -1
 	j	sys_return
@@ -1176,6 +1311,7 @@ reset_segments:
  * init
  */
 
+/* - init */
 init:
 	cld					/* make df=0 */
 	mov	cx, bss_len			/* clear bss */
@@ -1187,27 +1323,24 @@ init:
 	mov	(9*4+2), cs
 	mov	(32*4), system_call
 	mov	(32*4+2), cs
-
 .if tests
 	call	run_tests
+	mov	(cursor), 160*7
 .endif
-	// j .
-
 	call	create_process
 	mov	bp, di
 	mov	(current), bp
 	mov	p.id(bp), ax
-	mov	p.root(bp), d.inodes+inode_size
-	mov	p.pwd(bp), d.inodes+inode_size
 	mov	p.seg(bp), BEGIN_BREAK
-	mov	p.fd(bp), 1			/* stdin */
-	mov	p.fd+2(bp), 1			/* stdout */
-	mov	p.fd+4(bp), 1			/* stderr */
 	mov	ax, STACK_SIZE
 	add	ax, init_task_size
 	mov	p.brk(bp), ax
 	call	adjust_break
-
+	mov	p.root(bp), d.inodes+inode_size
+	mov	p.pwd(bp), d.inodes+inode_size
+	mov	p.fd(bp), 1			/* stdin */
+	mov	p.fd+2(bp), 1			/* stdout */
+	mov	p.fd+4(bp), 1			/* stderr */
 	mov	si, init_task
 	mov	di, STACK_SIZE
 	mov	es, p.seg(bp)
@@ -1219,7 +1352,8 @@ init:
 	mov	ss, ax
 	mov	fs, ax
 	mov	sp, STACK_SIZE
-	ljmp	BEGIN_BREAK, 0
+	ljmp	BEGIN_BREAK, STACK_SIZE
+
 
 	.bss
 bss_len = [.-..+1]/2
@@ -1560,24 +1694,10 @@ run_tests:
 	ret
 .endif
 
-/* - init task */
 	.text
 init_task:
-	j .	
-	// sys	fork
-	// mov	dx, ax
-	// add	ax, 0x0e30
-	// int	0x10
-	// sys	exit
-
-	// sys	open; filename; 0
-	// mov	bx, ax
-	// sys	read; buf; 10
-	// mov	bx, 1
-	// sys	write; buf; 10
-	sys	exec; filename
-	j .
+	sys	exec; filename; args
+	0xfeeb
 filename = .-init_task+STACK_SIZE; </bin/sh\0>
-// buf = .-init_task+STACK_SIZE; .fill 100
-
+args = .-init_task+STACK_SIZE; 0;
 init_task_size = .-init_task

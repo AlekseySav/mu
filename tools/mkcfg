@@ -2,6 +2,8 @@
 
 import sys
 
+prefix = ''
+
 def say(type, name):
     name = name.replace(";", "")
     val = ''
@@ -9,10 +11,15 @@ def say(type, name):
         name, val = name.split('[')
         val = '*[' + val
     tab = '\t'
-    print(f'{struct[0]}.{name}:\t{tab if len(name) < 5 else ""}.=.+[{type}{val}]')
+    _struct = struct[0]
+    if prefix:
+        _struct = prefix
+    print(f'{_struct}.{name}:\t{tab if len(name) < 5 else ""}.=.+[{type}{val}]')
 
 for line in sys.stdin:
     match line.split():
+        case ['//', 'name:', name]:
+            prefix = name
         case ['#define', name, value]:
             print(f'{name}={value}')
         case ['struct', name]:
@@ -20,6 +27,7 @@ for line in sys.stdin:
             struct = name
         case ['};']:
             print(f'{struct}_size:')
+            prefix = ''
         case [type, name]:
             if '#' in type:
                 continue

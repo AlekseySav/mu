@@ -15,5 +15,9 @@ alloc = 13
 free = 14
 exec = 15
 sync = 16
+gtty = 17
+stty = 18
+chdir = 19
+stat = 20
 
-N_SYSCALLS = 17
+N_SYSCALLS = 21

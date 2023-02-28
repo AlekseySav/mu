@@ -76,3 +76,11 @@ struct proc
    u2 sp;
    u2 fd[N_OPEN];
 };
+
+// name: tty
+struct tty
+{
+    u2 cursor;
+    u2 origin;
+    u2 attr;
+};

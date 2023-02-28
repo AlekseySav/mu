@@ -1,16 +1,17 @@
-%.o: %.s
-	@assem -x config.s syscalls.s $< >$@
+objets = tools/boot.o mu.o fs/sh.o fs/cat.o fs/clear.o fs/ls.o fs/echo.o fs/stat.o
 
-config.s: tools/mkcfg tools/config.h
-	@tools/mkcfg <tools/config.h >$@
-
-image.o: config.s tools/mkfs tools/boot.o mu.o fs/sh.o
+image.o: config.s tools/mkfs $(objets)
 	@cat $^ >$@
 	@tools/mkfs \
 		/home/hello.txt=fs/hello.txt \
 		/etc/boot=tools/boot.o \
 		/etc/mu=mu.o +i \
-		/bin/sh=fs/sh.o \
+		/bin/sh=fs/sh.o +x \
+		/bin/cat=fs/cat.o +x \
+		/bin/clear=fs/clear.o +x \
+		/bin/ls=fs/ls.o +x \
+		/bin/echo=fs/echo.o +x \
+		/bin/stat=fs/stat.o +x \
 		>$@
 
 run: image.o
@@ -23,4 +24,11 @@ hex: image.o
 	@make -s clean
 
 clean:
-	@rm -f [!i]*.o tools/*.o config.s tools/mkfs
+	@rm -f [!i]*.o tools/*.o fs/*.o config.s tools/mkfs
+
+
+%.o: %.s
+	@assem -x config.s syscalls.s $< >$@
+
+config.s: tools/mkcfg tools/config.h
+	@tools/mkcfg <tools/config.h >$@
