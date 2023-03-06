@@ -12,6 +12,7 @@ start:
 	mov	(1f), dx
 	mov	bx, 1
 	sys	write; 0:..; 1:..
+	sys	write; s; 1
 	loop	8b
 9:	sys	write; lf; 1
 	sys	exit
@@ -25,4 +26,5 @@ strlen:
 	j	1b
 1:	ret
 
+s:	'\s
 lf:	'\n

@@ -23,7 +23,7 @@ N_BUFFERS = [END_BUFFERS-BEGIN_BUFFERS]/512*16
 	.orig KERNEL_OFFSET
 	.bss
 bss_start:
-memory_map: 	.=.+N_BUFFERS/8
+memory_map: 	.=.+[N_BUFFERS/8]
 fsp:		.=.+[N_FSP*fp_size]
 proc:		.=.+[N_PROC*proc_size]
 current:	.=.+2
@@ -108,21 +108,27 @@ free_buffer:
 1:	ret
 
 
-/* - adjust_break(size: ax)			{ ax } */
+/* - adjust_break(size: ax) -> real-size: cx	{ ax } */
 	.text
-adjust_break:
-	push	di
-	push	cx
+_adjust_break:
 	add	ax, 15
 	mov	cx, ax
-	shr	cx, 1				/* bytes -> words */
+	and	cx, 0xfff0
 	shr	ax, 4				/* bytes -> segments */
 	add	ax, (break_end)
 	cmp	ax, END_BREAK
 	bho	error
+	mov	(break_end), ax
+	ret
+
+/* - adjust_break(size: ax)			{ ax } */
+adjust_break:
+	push	di
+	push	cx
 	push	es
 	mov	es, (break_end)
-	mov	(break_end), ax
+	call	_adjust_break
+	shr	cx, 1				/* bytes -> words */
 	xor	di, di
 	xor	ax, ax
 	rep stosw
@@ -236,6 +242,7 @@ sys.sync:
 	mov	ax, UNMAPPED_ZONES
 	mov	dx, UNMAPPED_ZONES*512/16
 1:	call	write_zone
+				//call t_printn
 	inc	ax
 	add	dx, 512/16
 	loop	1b
@@ -509,7 +516,7 @@ sys.stty:
  * process manager
  */
 
-/* - sys.getpid */
+/* - sys.getpid */ 
 sys.getpid:
 	push	p.id(bp)
 	pop	p.ax(bp)
@@ -841,17 +848,16 @@ sys.dup:
 sys.dup2:
 	call	get_fp				/* source */
 	push	bx
-	mov	bx, cx
-	call	sys.close
+	mov	bx, si
 	call	get_fp				/* dest */
 	je	1f
 	test	bx, bx
 	je	1f
 	call	close_fp
-1:	mov	si, cx
-	shl	si, 1
+1:	shl	si, 1
 	pop	bx
-	mov	(si), bx
+	mov	p.fd(bp_si), bx
+				//mov ax, p.fd+2(bp); call t_printn
 	incb	f.links(bx)
 	ret
 
@@ -995,10 +1001,10 @@ write_fp:
  * namei
  */
 
+	.bss
+namei_buf:	.=.+16
 /* - dir_entry(fp: bx, inode: di, name: fs:si)
 	-> inode: di, end-of-name: si { ax } */
-	.bss
-0:	.=.+16
 	.text
 dir_entry:
 1:	push	cx
@@ -1007,7 +1013,7 @@ dir_entry:
 	push	ds
 	pop	fs
 	mov	cx, 16
-	mov	si, 0b
+	mov	si, namei_buf
 	call	read_fp
 	test	p.ax(bp), -1
 	jne	9f
@@ -1019,13 +1025,11 @@ dir_entry:
 9:	pop	fs
 	pop	si
 	pop	cx
-	test	(d.number+0b), -1		/* empty entry */
-	je	1b
 	push	si
 	push	di
 	push	cx
 	mov	cx, 14
-	mov	di, 0b+d.name
+	mov	di, namei_buf+d.name
 	mov	al, ')
 2:	test	al, al
 	je	3f
@@ -1041,7 +1045,7 @@ dir_entry:
 	bne	error				/* too long name */
 	pop	cx
 	add	sp, 4
-	mov	di, (d.number+0b)
+	mov	di, (d.number+namei_buf)
 	shl	di, inode_log
 	add	di, d.inodes
 	ret
@@ -1049,6 +1053,28 @@ dir_entry:
 	pop	di
 	pop	si
 	j	1b
+
+/* - empty_entry(fp: bx, inode: di) -> f.pos */
+empty_entry:
+	push	ax
+	push	cx
+	push	si
+1:	mov	cx, 16
+	mov	si, namei_buf
+	push	fs
+	push	cs
+	pop	fs
+	call	read_fp
+	pop	fs
+	test	p.ax(bp), -1
+	je	9f
+	test	(namei_buf+d.number), -1
+	jne	1b
+	sub	f.pos(bx), 16
+9:	pop	si
+	pop	cx
+	pop	ax
+	ret
 
 /* - namei(fp: bx, name: fs:si, proc: bp)
 	-> inode: di, basename: fs:si { ax, dx } */
@@ -1081,6 +1107,37 @@ namei:	push	cx
 	ret
 
 
+/* - do_link(fp: bx, inode: di, L-inode: ax, name: fs:si) { ax } */
+do_link:
+	push	cx
+	push	si
+	call	empty_entry
+	mov	(namei_buf+d.number), ax
+	push	di
+	mov	di, namei_buf+d.name
+	xor	ax, ax
+	mov	cx, 7
+	rep stosw
+	mov	di, namei_buf+d.name
+1:	seg	fs
+	lodsb
+	stosb
+	test	al, al
+	jne	1b
+	pop	di
+	push	fs
+	push	cs
+	pop	fs
+	mov	si, namei_buf
+	mov	cx, 16
+	call	write_fp
+	call	write_buffer
+	pop	fs
+	pop	si
+	pop	cx
+	ret
+
+
 /* - copy_arg(source: fs:ax, dest: es:di) -> dest adjusted { ax } */
 copy_arg:
 	push	si
@@ -1093,7 +1150,7 @@ copy_arg:
 	pop	si
 	ret
 
-/* - copy_args(args: fs:cx) -> p.sp */
+/* - copy_args(args: fs:si) -> p.sp */
 copy_args:
  	push	es
  	push	fs
@@ -1113,6 +1170,8 @@ copy_args:
 	inc	di
 	shl	di, 1				/* di=first free chunk */
 	sub	si, di
+	xor	ax, ax
+	stosw
 2:	seg	fs
 	lodsw
 	test	ax, ax
@@ -1144,22 +1203,29 @@ sys.open:
 	mov	f.inode(bx), di
 	ret
 
-/* - sys.create */
-sys.create:
+/* - sys.creat */
+sys.creat:
 	call	create_fp
 	mov	bx, di
 	call	namei
+	push	si
+	push	di
 	call	dir_entry
+	pop	di
+	pop	si
 	bne	error
+	call	release_fp
+	call	alloc_inode
+	push	ax
+	call	do_link
 	call	release_fp
 	call	create_fd
 	movb	f.mode(bx), 1
 	movb	f.links(bx), 1
-	call	alloc_inode
-	shl	ax, inode_log
-	add	ax, d.inodes
-	mov	f.inode(bx), ax
-	mov	di, ax
+	pop	di
+	shl	di, inode_log
+	add	di, d.inodes
+	mov	f.inode(bx), di
 	mov	i.flags(di), cl
 	movb	i.links(di), 1
 	ret
@@ -1175,9 +1241,9 @@ sys.exec:
 	mov	ax, i.size(di)
 	add	ax, STACK_SIZE
 	push	ax
-	call	adjust_break
-	pop	p.brk(bp)
 	mov	si, cx
+	call	_adjust_break
+	pop	p.brk(bp)
 	call	copy_args
 	mov	si, STACK_SIZE
 1:	mov	cx, 512
@@ -1223,7 +1289,7 @@ sys_table:
 	4; sys.write
 	4; sys.open
 	0; sys.close
-	4; sys.create
+	4; sys.creat
 	4; sys.seek
 	0; sys.dup
 	2; sys.dup2
@@ -1311,7 +1377,7 @@ reset_segments:
  * init
  */
 
-/* - init */
+/* - main */
 init:
 	cld					/* make df=0 */
 	mov	cx, bss_len			/* clear bss */
@@ -1323,10 +1389,6 @@ init:
 	mov	(9*4+2), cs
 	mov	(32*4), system_call
 	mov	(32*4+2), cs
-.if tests
-	call	run_tests
-	mov	(cursor), 160*7
-.endif
 	call	create_process
 	mov	bp, di
 	mov	(current), bp
@@ -1354,12 +1416,21 @@ init:
 	mov	sp, STACK_SIZE
 	ljmp	BEGIN_BREAK, STACK_SIZE
 
+/* - init task */
+	.text
+init_task:
+	sys	exec; filename; args
+	0xfeeb
+filename = .-init_task+STACK_SIZE; </bin/sh\0>
+args = .-init_task+STACK_SIZE; 0;
+init_task_size = .-init_task
+
 
 	.bss
-bss_len = [.-..+1]/2
+bss_len = [.-bss_start+1]/2
 
-.if tests
-	.text
+
+
 /* - simple console driver
  *
  * configure cursor/attr by changing t_x/t_y/t_a
@@ -1368,6 +1439,8 @@ bss_len = [.-..+1]/2
  * t_prints(string: cs:si)			{ si, ax }
  * t_printn(number: ax)
  */
+.if tests
+	.text
 t_y: 0; t_x: 0; t_a: 7
 t_cols: 80
 t_putchar:
@@ -1415,289 +1488,5 @@ t_printn:
 	call	t_putchar
 	ret
 1:	<0123456789abcdef>
-
-/* - assert
- *
- * a_begin(name)				{ ax, si }
- * a_end()					{ ax, si }
- * assert_eq(condition: EF)
- */
-a_dots: <... \0>
-a_ok: <ok\0>
-a_id: 0
-a_begin:
-	movb	(cs:a_grp), '1
-	mov	(cs:a_id), 0
-	pop	si
-	call	t_prints
-	push	si
-	mov	si, a_dots
-	jmp	t_prints
-a_end:
-	mov	si, a_ok
-	call	t_prints
-	incb	(cs:t_y)
-	movb	(cs:t_x), 0
-	call	t_clear
-	ret
-a_next:
-	mov	(cs:a_id), 0
-	incb	(cs:a_grp)
-	ret
-assert_eq:
-	je	1f
-	movb	(cs:t_x), 0
-	incb	(cs:t_y)
-	mov	(cs:t_a), 4
-	mov	si, 2f
-	call	t_prints
-	mov	ax, (cs:a_id)
-	call	t_printn
-	mov	si, 4f
-	call	t_prints
-	j .
-1:	inc	(cs:a_id)
-	ret
-2:	<Assertion >; a_grp: <1-\0>
-4:	< failed\0>
-
-/* - helper functions */
-t_clear:
-	mov	(break_end), BEGIN_BREAK	/* reset break */
-	xor	ax, ax
-	mov	di, proc			/* reset proc */
-	mov	cx, N_PROC*proc_size
-	rep stosb
-	mov	di, memory_map			/* reset alloc */
-	mov	cx, N_BUFFERS/16
-	rep stosw
-	mov	di, fsp				/* reset fsp */
-	mov	cx, N_FSP*fp_size/2
-	rep stosw
-	ret
-
-
-t_buffer: .fill 512
-t_etc: <etc/>
-t_home: <home/>
-t_hello: <hello.txt\0>; t_hello_end:
-run_tests:
-/* - test allocator */
-	call	a_begin; <alloc\0>
-	mov	cx, N_BUFFERS
-	mov	dx, BEGIN_BUFFERS
-1:	call	alloc_buffer; cmp ax, dx; call assert_eq
-	add	dx, 512/16
-	loop	1b
-0:
-	mov	cx, N_BUFFERS
-	mov	dx, END_BUFFERS-[512/16]
-1:	mov	ax, dx
-	call	free_buffer
-	call	alloc_buffer; cmp ax, dx; call assert_eq
-	call	free_buffer
-	sub	dx, 512/16
-	loop	1b
-0:
-	call	a_end
-
-/* - test break */
-	call	a_begin; <break\0>
-	mov	ax, 10
-	call	adjust_break; cmp (break_end), BEGIN_BREAK+1; call assert_eq
-	mov	ax, 16*100
-	call	adjust_break; cmp (break_end), BEGIN_BREAK+101; call assert_eq
-	mov	cx, END_BREAK-BEGIN_BREAK-101
-	mov	si, (break_end)
-1:	mov	ax, 1
-	inc	si
-	call	adjust_break; cmp (break_end), si; call assert_eq
-	loop	1b
-	call	a_end
-
-/* - test proc */
-	call	a_begin; <proc\0>
-	mov	cx, 1
-	mov	si, proc
-1:	call	create_process
-	cmp	di, si; call assert_eq
-	cmp	ax, cx; call assert_eq
-	mov	p.id(di), ax
-	cmp	ax, p.id(di); call assert_eq
-	mov	bp, di
-	call	sys.getpid; cmp ax, p.ax(bp); call assert_eq
-	add	si, proc_size
-	inc	cx
-	cmp	cx, N_PROC
-	jl	1b
-0:
-	mov	si, 2*proc_size+proc
-	mov	p.id(si), 0
-	call	create_process
-	cmp	di, si; call assert_eq
-	cmp	ax, 3; call assert_eq
-0:
-	call	a_end
-
-/* - test fs (1) */
-	call	a_begin; <fs (1)\0>
-	call	create_fp; cmp di, fsp; call assert_eq
-	mov	bx, di
-	mov	di, d.inodes+[3*inode_size] // hello.txt
-	cmp	i.size(di), 8000; call assert_eq
-	call	fetch_xzones; cmp f.xzones(bx), BEGIN_BUFFERS; call assert_eq
-	mov	ax, i.zones+[9*2](di)
-	mov	gs, f.xzones(bx)
-	sub	ax, (gs:0)
-	cmp	ax, -1; call assert_eq
-0:
-	call	a_next
-	mov	f.pos(bx), 0
-1:	mov	cx, f.pos(bx)
-	shr	cx, 9
-	add	cx, i.zones(di)
-	cmp	cx, i.zones+[9*2](di)
-	jb	2f
-	inc	cx
-2:	call	get_zone
-	cmp	ax, cx; call assert_eq
-	inc	f.pos(bx)
-	mov	ax, f.pos(bx)
-	cmp	ax, i.size(di)
-	jb	1b
-0:
-	call	a_next
-	mov	bp, proc
-	mov	cx, 10
-	mov	si, t_buffer
-	call	read_fp
-	cmp	p.ax(bp), 0; call assert_eq
-	mov	cx, 10
-	mov	si, t_buffer
-	mov	f.pos(bx), 0
-	call	read_fp
-	cmp	p.ax(bp), 10; call assert_eq
-	cmp	(t_buffer+0), 'a|['b*256]; call assert_eq
-	cmp	(t_buffer+2), 'c|['d*256]; call assert_eq
-	cmp	(t_buffer+4), 'e|['f*256]; call assert_eq
-	cmp	(t_buffer+6), 'g|['h*256]; call assert_eq
-	cmp	(t_buffer+8), 'i|['j*256]; call assert_eq
-	mov	cx, 1024
-	mov	si, 0
-	call	_seek
-	cmp	f.buf(bx), 0; call assert_eq
-	cmp	f.pos(bx), 1024; call assert_eq
-	mov	cx, 10
-	mov	si, t_buffer
-	call	read_fp
-	cmp	(t_buffer), 'a|['a*256]; call assert_eq
-	mov	cx, -1024-10
-	mov	si, 1
-	call	_seek
-	cmp	f.buf(bx), 0; call assert_eq
-	cmp	f.pos(bx), 0; call assert_eq
-	mov	cx, 10000
-	mov	si, t_buffer
-	call	read_fp
-	cmp	p.ax(bp), 512; call assert_eq
-	cmp	(t_buffer+0), 'a|['b*256]; call assert_eq
-	mov	cx, 10000
-	mov	si, t_buffer
-	call	read_fp
-	cmp	p.ax(bp), 512; call assert_eq
-	cmp	(t_buffer+0), 'a|['a*256]; call assert_eq
-	mov	cx, 7998
-	mov	si, 0
-	call	_seek
-	cmp	f.buf(bx), 0; call assert_eq
-	cmp	f.pos(bx), 7998; call assert_eq
-	mov	cx, 10000
-	mov	si, t_buffer
-	call	read_fp
-	cmp	p.ax(bp), 2; call assert_eq
-	cmp	(t_buffer+0), 'a|['c*256]; call assert_eq
-0:
-	call	a_next
-	mov	cx, 0
-	mov	si, 0
-	call	_seek
-	movb	f.mode(bx), 1
-	mov	cx, 2000
-	mov	si, 2
-	call	_seek
-	cmp	f.buf(bx), 0; call assert_eq
-	cmp	f.pos(bx), 10000; call assert_eq
-	mov	cx, 10
-	mov	(t_buffer), ':|[')*256]
-	mov	si, t_buffer
-	call	write_fp
-	cmp	i.size(di), 10010; call assert_eq
-	mov	gs, f.buf(bx)
-	cmp	(gs:10000%512), ':|[')*256]; call assert_eq
-	incb	f.links(bx)
-	mov	f.inode(bx), di
-	mov	p.fd(bp), bx
-	xor	bx, bx
-	call	sys.close
-	call	sys.sync
-0:
-	call	a_end
-
-/* - test fs (2) */
-	call	a_begin; <fs (2)\0>
-	mov	bp, proc
-	mov	p.pwd(bp), d.inodes+inode_size
-	call	create_fp
-	mov	bx, di
-	incb	f.links(bx)
-1:
-	mov	di, d.inodes+inode_size
-	mov	si, t_etc
-	call	dir_entry; cmp di, d.inodes+[inode_size*4]; call assert_eq
-	cmp	si, t_home; call assert_eq
-0:
-	mov	di, d.inodes+inode_size
-	mov	f.pos(bx), 0
-	mov	si, t_home
-	call	dir_entry; cmp di, d.inodes+[inode_size*2]; call assert_eq
-	cmp	si, t_hello; call assert_eq
-2:
-	call	detach_buffer
-	mov	f.pos(bx), 0
-	mov	f.inode(bx), di
-	mov	si, t_hello
-	call	dir_entry; cmp di, d.inodes+[inode_size*3]; call assert_eq
-	cmp	si, t_hello_end; call assert_eq
-3:
-	call	create_fp
-	mov	bx, di
-	mov	si, t_home
-	call	namei; cmp di, d.inodes+[inode_size*2]; call assert_eq
-	cmp	si, t_hello; call assert_eq
-	call	a_end
-
-/* - test fs (3) */
-	call	a_begin; <fs (3)\0>
-	mov	bp, proc
-	mov	p.pwd(bp), d.inodes+inode_size
-	mov	si, t_home
-	mov	cx, 0
-	call	sys.open; cmp p.ax(bp), 0; call assert_eq
-	mov	bx, 0
-	mov	cx, 10
-	mov	si, t_buffer
-	call	sys.read; cmp p.ax(bp), 10; call assert_eq
-	cmp	(t_buffer), 'a|['b*256]; call assert_eq
-	call	a_end
-
-
-	ret
 .endif
 
-	.text
-init_task:
-	sys	exec; filename; args
-	0xfeeb
-filename = .-init_task+STACK_SIZE; </bin/sh\0>
-args = .-init_task+STACK_SIZE; 0;
-init_task_size = .-init_task

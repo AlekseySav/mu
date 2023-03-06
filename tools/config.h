@@ -7,7 +7,7 @@
 #define N_OPEN          10
 #define N_FSP           20
 #define N_INODES        1024
-#define N_ZONES         512*8
+#define N_ZONES         4096
 #define TTY_SIZE        128
 
 #include <stdint.h>

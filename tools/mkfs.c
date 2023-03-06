@@ -179,5 +179,7 @@ int main(int argc, char** argv)
         }
     }
     fwrite(&disk, 1, sizeof(disk), stdout);
+    trace("installed image uses %d/%d zones (%d%% of disk space)", n_zones, N_ZONES, (n_zones * 100) / N_ZONES);
+    trace("installed image uses %d/%d inodes (%d%% of files)", n_inodes, N_INODES, (n_inodes * 100) / N_INODES);
     return 0;
 }

@@ -1,17 +1,24 @@
-objets = tools/boot.o mu.o fs/sh.o fs/cat.o fs/clear.o fs/ls.o fs/echo.o fs/stat.o
+objets = tools/boot.o mu.o \
+	fs/bin/sh.o fs/bin/cat.o fs/bin/clear.o fs/bin/ls.o \
+	fs/bin/echo.o fs/bin/stat.o fs/bin/touch.o fs/bin/\:.o \
+	fs/bin/hexdump.o
 
 image.o: config.s tools/mkfs $(objets)
 	@cat $^ >$@
 	@tools/mkfs \
-		/home/hello.txt=fs/hello.txt \
 		/etc/boot=tools/boot.o \
 		/etc/mu=mu.o +i \
-		/bin/sh=fs/sh.o +x \
-		/bin/cat=fs/cat.o +x \
-		/bin/clear=fs/clear.o +x \
-		/bin/ls=fs/ls.o +x \
-		/bin/echo=fs/echo.o +x \
-		/bin/stat=fs/stat.o +x \
+		/bin/sh=fs/bin/sh.o +x \
+		/bin/cat=fs/bin/cat.o +x \
+		/bin/clear=fs/bin/clear.o +x \
+		/bin/ls=fs/bin/ls.o +x \
+		/bin/echo=fs/bin/echo.o +x \
+		/bin/stat=fs/bin/stat.o +x \
+		/bin/touch=fs/bin/touch.o +x \
+		/bin/\:=fs/bin/\:.o +x \
+		/bin/hexdump=fs/bin/hexdump.o +x \
+		/bin/hex=fs/bin/hexdump.o +x \
+		/1=fs/1.sh \
 		>$@
 
 run: image.o
@@ -24,7 +31,7 @@ hex: image.o
 	@make -s clean
 
 clean:
-	@rm -f [!i]*.o tools/*.o fs/*.o config.s tools/mkfs
+	@rm -f $(objets) config.s tools/mkfs
 
 
 %.o: %.s

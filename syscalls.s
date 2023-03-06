@@ -4,7 +4,7 @@ read = 2
 write = 3
 open = 4
 close = 5
-create = 6
+creat = 6
 seek = 7
 dup = 8
 dup2 = 9
@@ -21,3 +21,5 @@ chdir = 19
 stat = 20
 
 N_SYSCALLS = 21
+
+argvp = 2
