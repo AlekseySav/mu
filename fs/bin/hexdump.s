@@ -44,7 +44,7 @@ go:	sys	read; buf; 512
 	loop	1b
 	call	flush
 	j	go
-quit:	sys	exit
+quit:	sys	exit; 0
 
 
 /* - flush */

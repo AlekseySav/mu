@@ -9,4 +9,4 @@ start:
 	//push	4(si)
 	//pop	(1f)
 1:	sys	creat; 0:..; 1: 6
-	sys	exit
+	sys	exit; 0

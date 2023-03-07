@@ -6,7 +6,7 @@ start:
 	cmp	cx, 1
 	ja	1f
 	call	echo				/* from stdin */
-9:	sys	exit
+9:	sys	exit; 0
 1:	lodsw
 1:	lodsw					/* from files */
 	test	ax, ax
@@ -36,7 +36,7 @@ echo:
 error:
 	mov	bx, 2
 	sys	write; errbuf; errlen
-	sys	exit
+	sys	exit; 0
 
 	.data
 errbuf: <cat error\n>

@@ -31,7 +31,7 @@ quit:
 	sys	close
 	mov	bx, 1
 	sys	write; lf; 1
-	sys	exit
+	sys	exit; 0
 
 dot:	<.\0>
 lf:	<\n>

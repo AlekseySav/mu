@@ -14,5 +14,5 @@ start:
 	rep stosw
 	pop	es
 	sys	stty; tty
-	sys	exit
+	sys	exit; 0
 tty:	0; 0xb800; 0x07

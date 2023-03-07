@@ -3,18 +3,19 @@
 
 start:
 	sys	brk; end
-	cmp	cx, 1
-	jle	command
+	dec	cx
+	mov	(this_argc), cx
+	jcxz	command
 	push	2(si)
 	pop	(0f)
 	sys	open; 0:..; 0
-	mov	(fd), ax
+	mov	(ifd), ax
 	mov	bx, ax
+
+/* - command */
+	.text
 command:
 	sys	sync
-	// mov	bx, 2
-	// sys	dup2; 0
-	// sys	dup2; 1
 1:	call	parse
 	testb	(argc), -1
 	je	command
@@ -25,37 +26,41 @@ command:
 	mov	(0f), si
 	sys	chdir; 0:..
 	j	command
-1:	mov	bx, (ifile)
-	xor	si, si
-	call	set_io
-	mov	bx, (ofile)
-	mov	si, 1
-	call	set_io
-	sys	fork
+1:	cmp	(bx), 'q			/* 'q' -- special case */
+	je	quit
+	cmp	(bx), 's			/* 's' -- special case */
+	jne	1f
+	add	(_argvp), 2
+	j	command
+1:	sys	fork
 	test	ax, ax
 	jne	command
-	call	do_exec				/* try local */
+	call	do_exec				/* try ./ */
 	sub	(argv), 5
 	mov	di, (argv)
 	mov	si, bin
 	mov	cx, 5
 	rep movsb
 	call	do_exec				/* try /bin/ */
-	sys	exit
+quit:	sys	exit; 0
+	.data
+bin: </bin/>
+_argvp: argvp
 
 	.bss
+this_argc: .=.+2
+prefix: .=.+20
 argbuf: .=.+512
 argv: .=.+100
 argc: .=.+2
-ifile: .=.+2
-ofile: .=.+2
 state: .=.+2
+
 
 /* - getchar() -> char: ax */
 	.text
 getchar:
 	push	bx
-	test	(istr), -1
+	test	(istr), -1			/* from str */
 	je	1f
 	mov	bx, (istr)
 	inc	(istr)
@@ -63,22 +68,30 @@ getchar:
 	test	al, al
 	jne	9f
 	mov	(istr), 0
+1:	test	(inum), -1			/* from int */
+	je	1f
+	mov	ax, (inum)
+	shl	(inum), 4
+	shr	ax, 12
+	mov	bx, hexmap
+	xlat
+	j	9f
 1:	mov	bx, (ipos)
 	cmp	bx, (ilen)
 	jl	1f
-	test	(fd), -1
+	test	(ifd), -1			/* from stdin */
 	jne	2f
 	mov	(0f), greeting
-	testb	(argc), -1
+	cmp	si, argbuf
 	je	3f
 	mov	(0f), continue
 3:	mov	bx, 1
 	sys	write; 0:..; 3
-2:	mov	bx, (fd)
+2:	mov	bx, (ifd)			/* from file */
 	sys	read; ibuf; 512
 	cmp	ax, 0
 	ja	4f
-	sys	exit
+	sys	exit; 0
 4:	xor	bx, bx
 	mov	(ilen), ax
 	mov	(ipos), bx
@@ -87,107 +100,105 @@ getchar:
 9:	cbw
 	pop	bx
 	ret
+	.data
+hexmap: <0123456789abcdef>
+greeting: <i: >
+continue: <.. >
 	.bss
-istr: .=.+2
+istr: .=.+2					/* input from string */
+inum: .=.+2					/* input from int */
+ifd: .=.+2					/* input from file */
 ibuf: .=.+512
 ipos: .=.+2
 ilen: .=.+2
 
+
+/* - store_char(argv: di, *argv: si, char: al) { ax } */
+	.bss
+cstate: .=.+1
+	.text
+store_char:
+	mov	(si), al
+	inc	si
+	testb	(cstate), -1
+	jne	1f
+	incb	(cstate)
+	lea	ax, -1(si)
+	stosw
+	inc	(argc)
+1:	ret
+
 /* - parse() -> argbuf */
 	.text
 parse:
-	mov	(ifile), 0
-	mov	(ofile), 0
-	movb	(state), 0
 	movb	(argc), 0
-	mov	si, argbuf+20
+	mov	si, argbuf
 	mov	di, argv
 	mov	ax, si
 1:	call	getchar
-	mov	(si), al
-	inc	si
-	mov	bx, ctab
-	xlat
-	cbw
 	mov	bx, ax
-	add	bx, cact
-	call	bx
-	j	1b
-cstate: .byte 0
-cact:
-8:	call	getchar				/* \ */
-1:	testb	(cstate), -1			/* default */
-	jne	0f
-	lea	ax, -1(si)
-	mov	bx, (state)
 	shl	bx, 1
-	call	stab(bx)
-0:	ret					/* unknown */
-4:	call	getchar				/* # */
+	call	ctab(bx)
+	j	1b
+.esc:	call	getchar				/* \ */
+.def:	j	store_char
+.com:	call	getchar				/* # */
 	cmp	al, '\n
-	jne	4b
-2:	mov	(di), 0				/* \n ; */
+	jne	.com
+.end:	mov	(di), 0				/* \n ; */
+	mov	bx, (ipos)
+	sub	bx, (ilen)			/* clear cache */
+	mov	(0f), bx
+	push	(ilen)
+	pop	(ipos)
+	mov	bx, (ifd)
+	sys	seek; 0: 0; 1
 	pop	ax				/* skip return */
-3:	movb	(cstate), 0			/* \s \t */
-	movb	-1(si), '\0
+.tab:	movb	(cstate), 0			/* \s \t */
+	movb	(si), '\0
+	inc	si
+.unk:	ret					/* unknown */
+.dol:	call	getchar				/* $ */
+	cmp	al, '#
+	jne	1f
+	push	(this_argc)
+	pop	(inum)
 	ret
-5:	movb	(state), 1			/* < */
-	ret
-6:	movb	(state), 2			/* > */
-	ret
-7:	call	getchar				/* $ */
-	mov	bx, argvp
+1:	cmp	al, '?
+	jne	1f
+	sys	wait
+	mov	(inum), ax
+1:	mov	bx, (_argvp)
 	sub	ax, '0-1
 	shl	ax, 1
 	add	bx, ax
 	push	(bx)
 	pop	(istr)
 	ret
-c0 = 0b-cact
-c1 = 1b-cact
-c2 = 2b-cact
-c3 = 3b-cact
-c4 = 4b-cact
-c5 = 5b-cact
-c6 = 6b-cact
-c7 = 7b-cact
-c8 = 8b-cact
-1:	incb	(cstate)
-	stosw					/* state=0 */
-	incb	(argc)
-	ret
-2:	mov	(0f), ax
-	sys	open; 0:..; 0 			/* redirect input */
-	mov	(ifile), ax
-	movb	(state), 0
-	ret
-3:	mov	(0f), ax			/* redirect output */
-	sys	creat; 0:..; 6
-	mov	(ofile), ax
-	movb	(state), 0
-	ret
+.str:	call	getchar
+	cmp	al, '"
+	je	.unk
+	push	.str
+	jmp	store_char
+.io0:
+.io1:
 	.data
-stab:	1b; 2b; 3b
-ctab:	.byte	c2, c0, c0, c0, c0, c0, c0, c0, c0, c3, c2, c0, c0, c0, c0, c0
-	.byte	c0, c0, c0, c0, c0, c0, c0, c0, c0, c0, c0, c0, c0, c0, c0, c0
-	.byte	c3, c1, c1, c4, c7, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1
-	.byte	c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c2, c5, c1, c6, c1
-	.byte	c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1
-	.byte	c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c8, c1, c1, c1
-	.byte	c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1
-	.byte	c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c1, c0
-
-	.text
-/* - set_io(fd: si, number: bx) */
-set_io:
-	test	bx, bx
-	je	9f
-	//mov ax, si; call printn
-//	mov ax, bx; call printn
-	mov	(0f), si
-				// mov ax, si; call printn
-	sys	dup2; 0:..
-9:	ret
+ctab:	.unk; .unk; .unk; .unk; .unk; .unk; .unk; .unk
+	.unk; .tab; .end; .unk; .unk; .unk; .unk; .unk
+	.unk; .unk; .unk; .unk; .unk; .unk; .unk; .unk
+	.unk; .unk; .unk; .unk; .unk; .unk; .unk; .unk
+	.tab; .def; .str; .com; .dol; .def; .def; .def
+	.def; .def; .def; .def; .def; .def; .def; .def
+	.def; .def; .def; .def; .def; .def; .def; .def
+	.def; .def; .def; .end; .io0; .def; .io1; .def
+	.def; .def; .def; .def; .def; .def; .def; .def
+	.def; .def; .def; .def; .def; .def; .def; .def
+	.def; .def; .def; .def; .def; .def; .def; .def
+	.def; .def; .def; .def; .esc; .def; .def; .def
+	.def; .def; .def; .def; .def; .def; .def; .def
+	.def; .def; .def; .def; .def; .def; .def; .def
+	.def; .def; .def; .def; .def; .def; .def; .def
+	.def; .def; .def; .def; .def; .def; .def; .unk
 
 /* - do_exec() */
 	.text
@@ -215,15 +226,14 @@ putchar:
 	sys	write; 1f; 1
 	ret
 1:	.byte ..
-base: 16
-hexmap: <0123456789abcdef>
+_base: 16
 printn:
 	pusha
 	call	0f
 	popa
 	ret
 0:	xor	dx, dx
-	div	(base)
+	div	(_base)
 	push	dx
 	test	ax, ax
 	je	1f
@@ -234,10 +244,4 @@ printn:
 	j	putchar
 
 
-	.data
-greeting: <i: >
-continue: <.. >
-bin: </bin/>
-	.bss
-fd: .=.+2
-end:
+	.bss; end:

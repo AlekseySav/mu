@@ -19,7 +19,8 @@ gtty = 17
 stty = 18
 chdir = 19
 stat = 20
+wait = 21
 
-N_SYSCALLS = 21
+N_SYSCALLS = 22
 
 argvp = 2

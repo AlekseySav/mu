@@ -564,6 +564,7 @@ sys.exit:
 	pop	(break_end)
 	mov	bp, p.parent(bp)
 	mov	(current), bp
+	mov	p.child(bp), si
 	ret
 
 /* - sys.fork */
@@ -599,6 +600,12 @@ sys.fork:
 	pop	es
 	pop	ds
 	jmp	reset_segments
+
+/* - sys.wait */
+sys.wait:
+	push	p.child(bp)
+	pop	p.ax(bp)
+	ret
 
 
 /* - create_process() -> proc: di, pid: ax */
@@ -865,6 +872,7 @@ sys.dup2:
 sys.seek:
 	call	get_fp
 	beq	error
+	xchg	cx, si
 _seek:
 	shl	si, 1
 	call	seek_table(si)
@@ -1283,7 +1291,7 @@ sys.chdir:
 /* - sys_table */
 	.data
 sys_table:
-	0; sys.exit
+	2; sys.exit
 	0; sys.fork
 	4; sys.read
 	4; sys.write
@@ -1304,6 +1312,7 @@ sys_table:
 	2; sys.stty
 	2; sys.chdir
 	2; sys.stat
+	0; sys.wait
 
 /* - system_call */
 system_call:
@@ -1422,7 +1431,7 @@ init_task:
 	sys	exec; filename; args
 	0xfeeb
 filename = .-init_task+STACK_SIZE; </bin/sh\0>
-args = .-init_task+STACK_SIZE; 0;
+args = .-init_task+STACK_SIZE; filename; 0;
 init_task_size = .-init_task
 
 

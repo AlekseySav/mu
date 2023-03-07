@@ -1,1 +1,1 @@
-	sys exit
+	sys exit; 0

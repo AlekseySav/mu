@@ -36,7 +36,7 @@ start:
 	push	1b
 	j	printn
 quit:	sys	close
-	sys	exit
+	sys	exit; 0
 
 putchar:
 	mov	(0f), al

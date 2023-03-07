@@ -74,6 +74,7 @@ struct proc
    u2 root;
    u2 pwd;
    u2 sp;
+   u2 child;
    u2 fd[N_OPEN];
 };
 

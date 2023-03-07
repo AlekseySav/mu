@@ -15,7 +15,7 @@ start:
 	sys	write; s; 1
 	loop	8b
 9:	sys	write; lf; 1
-	sys	exit
+	sys	exit; 0
 
 strlen:
 	xor	al, al
