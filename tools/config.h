@@ -10,6 +10,9 @@
 #define N_ZONES         4096
 #define TTY_SIZE        128
 
+#define TTY_NO_BUF       0x100
+#define TTY_NO_ECHO      0x200
+
 #include <stdint.h>
 
 typedef uint8_t u1;

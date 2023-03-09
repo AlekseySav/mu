@@ -1,5 +1,6 @@
+#!
 echo installed commands:
 cd /bin; ls
 
 echo builtin commands:
-echo cd q
+echo cd q s

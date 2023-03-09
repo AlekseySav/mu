@@ -1,8 +1,8 @@
 objets = tools/boot.o mu.o \
 	fs/bin/sh.o fs/bin/cat.o fs/bin/clear.o fs/bin/ls.o \
 	fs/bin/echo.o fs/bin/stat.o fs/bin/touch.o fs/bin/\:.o \
-	fs/bin/hexdump.o fs/bin/goto.o fs/bin/cmp.o \
-	fs/bin/if.o
+	fs/bin/hexdump.o fs/bin/goto.o \
+	fs/bin/if.o fs/bin/ed.o
 
 image.o: config.s tools/mkfs $(objets)
 	@cat $^ >$@
@@ -20,10 +20,11 @@ image.o: config.s tools/mkfs $(objets)
 		/bin/hexdump=fs/bin/hexdump.o +x \
 		/bin/hex=fs/bin/hexdump.o +x \
 		/bin/goto=fs/bin/goto.o +x \
-		/bin/cmp=fs/bin/cmp.o +x \
 		/bin/if=fs/bin/if.o +x \
+		/bin/ed=fs/bin/ed.o +x \
 		/1=fs/tmp/1.sh \
 		/2=fs/tmp/2.sh \
+		/tmp/1.sh=fs/tmp/1.sh \
 		>$@
 
 run: image.o

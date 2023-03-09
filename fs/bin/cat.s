@@ -5,6 +5,7 @@ start:
 	sys	brk; end
 	cmp	cx, 1
 	ja	1f
+	xor	cx, cx
 	call	echo				/* from stdin */
 9:	sys	exit; 0
 1:	lodsw
@@ -36,7 +37,7 @@ echo:
 error:
 	mov	bx, 2
 	sys	write; errbuf; errlen
-	sys	exit; 0
+	sys	exit; 1
 
 	.data
 errbuf: <cat error\n>

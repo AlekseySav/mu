@@ -278,6 +278,10 @@ keyboard_interrupt:
 	mov	bx, kb.table(bx)
 	xlat
 	call	si
+	test	(attr), TTY_NO_BUF
+	je	0f
+	push	(kb.tail)
+	pop	(kb.cooked)
 0:	mov	al, 0x20
 	outb	0x20
 	popa
@@ -293,6 +297,8 @@ kb.actions:
 4:	and	(kb.tail), TTY_SIZE-1
 	add	si, kb.queue
 	mov	(si), al
+	test	(attr), TTY_NO_ECHO
+	jne	0f
 	mov	cx, 1
 	jmp	tty._write
 3:	test	dl, dl				/* backspace */
@@ -362,6 +368,7 @@ kb.queue: .=.+TTY_SIZE
 kb.head: .=.+2
 kb.tail: .=.+2
 kb.cooked: .=.+2
+
 
 /*
  * tty driver
@@ -841,7 +848,7 @@ sys.close:
 	beq	error
 	call	close_fp
 1:	shl	si, 1
-	mov	(si), 0
+	mov	p.fd(bp_si), 0
 	ret
 
 /* - sys.dup */
@@ -902,12 +909,16 @@ sys.stat:
 	call	get_fp
 	beq	error
 	xchg	si, di
-	mov	cx, [inode_size-[10*2]]/2
+	mov	ax, si
+	mov	cx, inode_size/2
 	push	es
 	push	fs
 	pop	es
 	rep movsw
 	pop	es
+	sub	ax, d.inodes
+	shr	ax, inode_log
+	mov	-2(fs:di), ax
 	ret
 
 
@@ -987,8 +998,8 @@ write_fp:
 	push	si
 	push	di
 	push	fs
-	pop	ds
 	les	di, f.pos(bx)
+	pop	ds
 	add	f.pos(cs:bx), cx
 	and	di, 511
 	rep movsb
@@ -1431,7 +1442,7 @@ init_task:
 	sys	exec; filename; args
 	0xfeeb
 filename = .-init_task+STACK_SIZE; </bin/sh\0>
-args = .-init_task+STACK_SIZE; filename; 0;
+args = .-init_task+STACK_SIZE; 0;
 init_task_size = .-init_task
 
 
@@ -1450,7 +1461,7 @@ bss_len = [.-bss_start+1]/2
  */
 .if tests
 	.text
-t_y: 0; t_x: 0; t_a: 7
+t_y: 0; t_x: 30; t_a: 7
 t_cols: 80
 t_putchar:
 	push	bx
@@ -1481,6 +1492,8 @@ t_prints:
 t_printn:
 	pusha
 	call	3f
+	mov	al, '\s
+	call	t_putchar
 	popa
 	ret
 3:	mov	cx, 4

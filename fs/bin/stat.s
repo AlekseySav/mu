@@ -20,9 +20,19 @@ start:
 	shl	al, 1
 	loop	1b
 
+	push	i.zones+16(di)
+	push	i.zones+14(di)
+	push	i.zones+12(di)
+	push	i.zones+10(di)
+	push	i.zones+8(di)
+	push	i.zones+6(di)
+	push	i.zones+4(di)
+	push	i.zones+2(di)
+	push	i.zones(di)
 	push	i.size(di)
 	and	i.links(di), 0xff
 	push	i.links(di)
+	push	i.zones+18(di)
 
 	mov	si, fmt
 1:	lodsb
@@ -58,8 +68,10 @@ printn:
 	j	putchar
 
 
-fmt:	<flags: >
+fmt:	<inode: \e\n>
+	<flags: >
 flags:	<???idrwx\nlinks: \e\n>
-	<size: \e\n\0>
+	<size: \e\n>
+	<zones: \e \e \e \e \e \e \e \e \e\n>
 
-buf: .fill 12
+buf: .fill inode_size
