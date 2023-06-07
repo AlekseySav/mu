@@ -1,0 +1,19 @@
+#!/bin/bash
+
+tools/make .bin/image
+gcc tools/db.c -o .bin/db
+echo -n >.bin/rs2
+
+.bin/db </dev/null &
+pid=$?
+
+qemu-system-x86_64 \
+	-usb -device qemu-xhci .bin/image \
+	-serial stdio \
+	-serial file:.bin/rs2 \
+	-vga none \
+	-display none \
+	2>/dev/null
+
+kill $pid
+wait $pid
